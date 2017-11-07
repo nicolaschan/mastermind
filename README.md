@@ -1,0 +1,2 @@
+# mastermind
+💡 Mastermind solver
