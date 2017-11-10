@@ -1,3 +1,7 @@
+module Mastermind where
+
+import Control.Parallel
+import Control.Parallel.Strategies
 import Data.Map (empty, member, Map, adjust, insert)
 import Data.List (sort, genericLength)
 import System.Random (randomRs, mkStdGen)
@@ -39,9 +43,13 @@ consistentSingle :: Code -> Result -> Bool
 consistentSingle c (g, s) = score g c == s
 
 nextGuess :: Int -> [Color] -> [Result] -> Guess
-nextGuess 4 [1,2,3,4,5,6] [] = [1,1,2,3]
+--nextGuess 4 [1,2,3,4,5,6] [] = [1,1,2,3]
 nextGuess len colors results = 
-    maxBy (avgNumberEliminated results (filterConsistent results (allCodes len colors))) (filterConsistent results (allCodes len colors))
+    let consistentResults = filterConsistent results (allCodes len colors) in
+    parMaxBy (avgNumberEliminated results consistentResults) consistentResults
+
+parMaxBy :: (NFData a, NFData b, Ord b) => (a -> b) -> [a] -> a
+parMaxBy f xs = snd $ maxBy fst $ parMap rdeepseq (\x -> (f x, x)) xs
 
 maxBy :: Ord b => (a -> b) -> [a] -> a
 maxBy f (x:xs) = foldl (\acc x -> if f x > f acc then x else acc) x xs
@@ -51,28 +59,14 @@ adjustMapDefault f def k m
     | member k m = adjust f k m
     | otherwise = insert k def m
 
--- For every scoring outcome, predict the number of possibilities that can be eleminated.
--- Then average these numbers, weighted by the probability the each one occurs.
-averageElimination :: [Result] -> [Code] -> Guess -> Float
-averageElimination results possibilities guess = 0--averageElimination' results possibilities guess 
-
-resultDistribution :: [Code] -> Guess -> Map Score Int 
-resultDistribution = resultDistribution' empty
-
-resultDistribution' :: Map Score Int -> [Code] -> Guess -> Map Score Int
-resultDistribution' distribution [] _ = distribution
-resultDistribution' distribution (p:possibilities) guess = adjustMapDefault (+1) 1 (score guess p) (resultDistribution' distribution possibilities guess)
-
 avg :: Fractional a => [a] -> a
 avg xs = sum xs / genericLength xs
 
-avgNumberEliminated :: Fractional a => [Result] -> [Code] -> Guess -> a 
+avgNumberEliminated :: [Result] -> [Code] -> Guess -> Float 
 avgNumberEliminated results possibilities guess = avg $ map (\code -> fromIntegral $ numberEliminated results possibilities code guess) possibilities 
 
 numberEliminated :: [Result] -> [Code] -> Code -> Guess -> Int
 numberEliminated results possibilities code guess = length possibilities - (length $ filterConsistent (result guess code:results) possibilities)
-
--- If p is the solution, then add it to the map of results
 
 result :: Guess -> Code -> Result
 result guess code = (guess, score guess code)
@@ -110,7 +104,11 @@ guess = [1,2,3,4]
 results :: [Result]
 results = [result guess code]
 
-main = do
-    --putStrLn . show $ map (avgNumberEliminated results (filterConsistent results space)) space 
-    --putStrLn . show $ nextGuess 4 [1..6] [] 
-    putStrLn . show $ nextGuess 4 [1..6] [([1,1,2,3],(1,1)),([1,4,1,5],(2,0)),([1,3,6,5],(3,0)),([1,3,3,5],(2,0))]
+simulate :: Int -> [Color] -> Code -> [Guess] 
+simulate = simulate' []
+
+simulate' :: [Result] -> Int -> [Color] -> Code -> [Guess] 
+simulate' [] len colors code = simulate' [result (nextGuess len colors []) code] len colors code
+simulate' results@((g,s):res) len colors code
+    | s == (len,0) = map fst results 
+    | otherwise = simulate' ((result (nextGuess len colors results) code):results) len colors code
