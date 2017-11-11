@@ -2,32 +2,14 @@ module Mastermind where
 
 import Control.Parallel
 import Control.Parallel.Strategies
-import Data.Map (empty, member, Map, adjust, insert)
+import Data.Map (empty, member, Map, adjust, insert, toList, findWithDefault)
 import Data.List (sort, genericLength)
-import System.Random (randomRs, mkStdGen)
 
 type Color = Int
 type Code = [Color]
 type Guess = Code
 type Score = (Int, Int)
 type Result = (Guess, Score)
-
-data Tree a = Leaf a | Node a [Tree a]
-
-instance Show a => Show (Tree a) where
-    show (Leaf v) = show v
-    show (Node v b) = "(" ++ show v ++ " > " ++ (show b) ++ ")"
-
-randomCode :: Int -> [Color] -> Int -> Code
-randomCode len colors seed = map (colors !!) $ take len $ randomRs (0,(length colors) - 1) (mkStdGen seed) 
-
-getCode :: Int -> (Int, Int) -> Int -> Code
-getCode 0 _ _ = []
-getCode len range@(hi,lo) index = (index `mod` (hi-lo)) + lo : getCode (pred len) range (index `div` (hi-lo))
-
-buildTree :: Int -> [Color] -> [Tree Color]
-buildTree 0 colors = [Leaf x | x <- colors]
-buildTree depth colors = [Node x (buildTree (pred depth) colors) | x <- colors]
 
 allCodes :: Int -> [Color] -> [[Color]]
 allCodes 0 _ = [[]]
@@ -42,11 +24,19 @@ consistent results code = all (consistentSingle code) results
 consistentSingle :: Code -> Result -> Bool
 consistentSingle c (g, s) = score g c == s
 
+appendNoRepeats :: Eq a => [a] -> [a] -> [a]
+appendNoRepeats xs [] = xs
+appendNoRepeats xs (y:ys)
+    | y `elem` xs = appendNoRepeats xs ys
+    | otherwise = appendNoRepeats (xs ++ [y]) ys
+
 nextGuess :: Int -> [Color] -> [Result] -> Guess
---nextGuess 4 [1,2,3,4,5,6] [] = [1,1,2,3]
-nextGuess len colors results = 
-    let consistentResults = filterConsistent results (allCodes len colors) in
-    parMaxBy (avgNumberEliminated results consistentResults) consistentResults
+nextGuess 4 [1,2,3,4,5,6] [] = [1,1,2,2]
+nextGuess len colors results =
+    let space = allCodes len colors in
+    let consistentResults = filterConsistent results space in
+    let guess = parMaxBy (avgNumberEliminated results consistentResults) (appendNoRepeats consistentResults space) in
+    if avgNumberEliminated results consistentResults guess == 0 then consistentResults !! 0 else guess
 
 parMaxBy :: (NFData a, NFData b, Ord b) => (a -> b) -> [a] -> a
 parMaxBy f xs = snd $ maxBy fst $ parMap rdeepseq (\x -> (f x, x)) xs
@@ -62,11 +52,48 @@ adjustMapDefault f def k m
 avg :: Fractional a => [a] -> a
 avg xs = sum xs / genericLength xs
 
-avgNumberEliminated :: [Result] -> [Code] -> Guess -> Float 
-avgNumberEliminated results possibilities guess = avg $ map (\code -> fromIntegral $ numberEliminated results possibilities code guess) possibilities 
+cdiv :: Integral a => a -> a -> a
+cdiv x y
+    | x `mod` y == 0 = x `div` y
+    | otherwise = x `div` y + 1
 
-numberEliminated :: [Result] -> [Code] -> Code -> Guess -> Int
-numberEliminated results possibilities code guess = length possibilities - (length $ filterConsistent (result guess code:results) possibilities)
+pigeonMedian :: (Enum a, Ord a) => [a] -> a
+pigeonMedian xs = let (m, lo, len) = countMinLen xs in
+    mapMedian m lo len
+
+mapMedian :: (Enum a, Ord a) => Map a Int -> a -> Int -> a
+mapMedian m lo len = mapMedian' m lo (len `cdiv` 2)
+
+mapMedian' :: (Enum a, Ord a) => Map a Int -> a -> Int -> a
+mapMedian' m k len
+    | len - findWithDefault 0 k m <= 0 = k
+    | otherwise = mapMedian' m (succ k) (len - findWithDefault 0 k m)
+
+median :: Ord a => [a] -> a
+median xs = middle $ sort xs
+    where middle xs = xs !! (length xs `div` 2)
+
+countMinLen :: Ord a => [a] -> (Map a Int, a, Int)
+countMinLen (x:xs) = foldl (\(m,lo,len) x -> (adjustMapDefault (+1) 1 x m,if x < lo then x else lo,succ len)) (insert x 1 empty,x,1) xs
+
+count :: Ord a => [a] -> Map a Int
+count [] = empty
+count (x:xs) = adjustMapDefault (+1) 1 x (count xs)
+
+mode :: Ord a => [a] -> a
+mode xs = fst $ maxBy snd (toList (count xs))
+
+allScores :: Int -> [Score]
+allScores len = [ (i,j) |  i <- [0..len], j <- [0..len], i + j <= len ]
+
+avgNumberEliminated :: [Result] -> [Code] -> Guess -> Float 
+avgNumberEliminated results possibilities guess = fromIntegral . minimum $ filter (/= length possibilities) $ map (numberEliminatedScore results possibilities guess) (allScores $ length guess) 
+
+numberEliminatedScore :: [Result] -> [Code] -> Guess -> Score -> Int
+numberEliminatedScore results possibilities guess score = length possibilities - (length $ filterConsistent ((guess,score):results) possibilities)
+
+numberEliminated :: [Result] -> [Code] -> Guess -> Code -> Int
+numberEliminated results possibilities guess code = length possibilities - (length $ filterConsistent (result guess code:results) possibilities)
 
 result :: Guess -> Code -> Result
 result guess code = (guess, score guess code)
@@ -93,7 +120,7 @@ incorrectSorted (x:xs) (y:ys)
     | otherwise = 1 + incorrectSorted xs ys
 
 code :: Code
-code = randomCode 4 [1..6] 48
+code = [3,4,5,6]
 
 space :: [Code]
 space = allCodes 4 [1..6]
@@ -104,11 +131,11 @@ guess = [1,2,3,4]
 results :: [Result]
 results = [result guess code]
 
-simulate :: Int -> [Color] -> Code -> [Guess] 
+simulate :: Int -> [Color] -> Code -> Int 
 simulate = simulate' []
 
-simulate' :: [Result] -> Int -> [Color] -> Code -> [Guess] 
+simulate' :: [Result] -> Int -> [Color] -> Code -> Int 
 simulate' [] len colors code = simulate' [result (nextGuess len colors []) code] len colors code
 simulate' results@((g,s):res) len colors code
-    | s == (len,0) = map fst results 
+    | s == (len,0) = length results 
     | otherwise = simulate' ((result (nextGuess len colors results) code):results) len colors code
