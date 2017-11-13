@@ -2,8 +2,9 @@ module Mastermind where
 
 import Control.Parallel
 import Control.Parallel.Strategies
+import Data.Function (on)
 import Data.Map (empty, member, Map, adjust, insert, toList, findWithDefault)
-import Data.List (sort, genericLength)
+import Data.List (sort, sortBy, genericLength)
 
 type Color = Int
 type Code = [Color]
@@ -35,8 +36,11 @@ nextGuess 4 [1,2,3,4,5,6] [] = [1,1,2,2]
 nextGuess len colors results =
     let space = allCodes len colors in
     let consistentResults = filterConsistent results space in
-    let guess = parMaxBy (avgNumberEliminated results consistentResults) (appendNoRepeats consistentResults space) in
-    if avgNumberEliminated results consistentResults guess == 0 then consistentResults !! 0 else guess
+    let [guess] = top 1 (heuristicNumberEliminated results consistentResults) (appendNoRepeats consistentResults space) in
+    if heuristicNumberEliminated results consistentResults guess == 0 then consistentResults !! 0 else guess
+
+top :: (NFData a, NFData b, Ord b) => Int -> (a -> b) -> [a] -> [a]
+top n f xs = map snd $ take n $ sortBy (flip compare `on` fst) $ parMap rdeepseq (\x -> (f x, x)) xs
 
 parMaxBy :: (NFData a, NFData b, Ord b) => (a -> b) -> [a] -> a
 parMaxBy f xs = snd $ maxBy fst $ parMap rdeepseq (\x -> (f x, x)) xs
@@ -86,8 +90,18 @@ mode xs = fst $ maxBy snd (toList (count xs))
 allScores :: Int -> [Score]
 allScores len = [ (i,j) |  i <- [0..len], j <- [0..len], i + j <= len ]
 
-avgNumberEliminated :: [Result] -> [Code] -> Guess -> Float 
-avgNumberEliminated results possibilities guess = fromIntegral . minimum $ filter (/= length possibilities) $ map (numberEliminatedScore results possibilities guess) (allScores $ length guess) 
+heuristic :: [Int] -> Float
+heuristic = fromIntegral . minimum
+
+{-deepSearch :: [Result] -> [Code] -> [Guess] -> Int -> Guess
+deepSearch results possibilities guesses 1 = top 1 (heuristicNumberEliminated results possibilities) guesses !! 0
+deepSearch results possibilities guesses depth = 
+    let top10 = (top 10 (heuristicNumberEliminated results possibilities) guesses) in
+    let scores = allScores $ length (head top10) in
+    head $ top 1 [ deepSearch ((guess,score):results) (filterConsistent ((guess,score):results) possibilities) (filterConsistent ((guess,score):results) possibilities) (pred depth) | guess <- top10, score <- scores ]-} 
+
+heuristicNumberEliminated :: [Result] -> [Code] -> Guess -> Float 
+heuristicNumberEliminated results possibilities guess = heuristic $ map (numberEliminatedScore results possibilities guess) (allScores $ length guess) 
 
 numberEliminatedScore :: [Result] -> [Code] -> Guess -> Score -> Int
 numberEliminatedScore results possibilities guess score = length possibilities - (length $ filterConsistent ((guess,score):results) possibilities)
