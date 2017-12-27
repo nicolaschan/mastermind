@@ -6,7 +6,7 @@ Install dependencies with `cabal install`. Then, run with `cabal run` and it wil
 
 ## Example game
 The code to guess is `[3,2,1,5]`.
-```bash
+```hs
 $ cabal run
 Preprocessing executable 'mastermind' for mastermind-0.1.0.0...
 Running mastermind...
