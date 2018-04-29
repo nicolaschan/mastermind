@@ -1,10 +1,11 @@
 # Mastermind
 💡 Mastermind solver
 
-## Usage
+## Installation
 ```bash
 $ git clone https://github.com/nicolaschan/mastermind.git && cd mastermind
 $ runhaskell Setup configure --user
+$ cabal install --only-dependencies # If previous step said missing dependencies
 $ runhaskell Setup build
 $ sudo runhaskell Setup install
 $ mastermind
